@@ -62,6 +62,12 @@ impl Contract {
         &mut self,
         owner: AccountId,
     ) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.owner_contract,
+            "Only the owner contract can withdraw"
+        );
+        
         if let Some(ft_contract) = &self.ft_contract {
             Promise::new(ft_contract.clone()).function_call(
                 "ft_transfer".to_string(), 
