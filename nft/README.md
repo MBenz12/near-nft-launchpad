@@ -1,4 +1,4 @@
-# nft-launchpad
+# nft
 
 cargo-near-new-project-description
 
