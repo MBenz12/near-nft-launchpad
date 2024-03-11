@@ -440,9 +440,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.15.3"
+version = "3.15.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ea184aa71bb362a1157c896979544cc23974e08fd265f29ea96b59f0b4a555b"
+checksum = "7ff69b9dd49fd426c69a0db9fc04dd934cdb6645ff000864d98f7e2af8830eaa"
 
 [[package]]
 name = "byteorder"
@@ -1165,6 +1165,17 @@ checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "ft"
+version = "0.1.0"
+dependencies = [
+ "near-contract-standards",
+ "near-sdk",
+ "near-workspaces",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -4128,17 +4139,6 @@ name = "valuable"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b7e5d4d90034032940e4ace0d9a9a057e7a45cd94e6c007832e39edb82f6d"
-
-[[package]]
-name = "vault"
-version = "0.1.0"
-dependencies = [
- "near-contract-standards",
- "near-sdk",
- "near-workspaces",
- "serde_json",
- "tokio",
-]
 
 [[package]]
 name = "vcpkg"

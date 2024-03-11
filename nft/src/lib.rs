@@ -25,23 +25,43 @@ use near_contract_standards::non_fungible_token::metadata::{
 };
 use near_contract_standards::non_fungible_token::NonFungibleToken;
 use near_contract_standards::non_fungible_token::{Token, TokenId};
+use near_contract_standards::fungible_token::Balance;
 use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LazyOption;
+use near_sdk::collections::{LazyOption, LookupMap};
 use near_sdk::json_types::U128;
 use near_sdk::{
-    env, near_bindgen, require, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue,
+    env, near_bindgen, require, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue, NearToken, Gas, 
+    serde_json::json,
 };
 use std::collections::HashMap;
+
+mod ft_balances;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 #[borsh(crate = "near_sdk::borsh")]
 pub struct Contract {
-    tokens: NonFungibleToken,
-    metadata: LazyOption<NFTContractMetadata>,
+    pub tokens: NonFungibleToken,
+
+    pub metadata: LazyOption<NFTContractMetadata>,
+
+    pub mint_price: u128,
+    
+    //which fungible token can be used to purchase NFTs
+    pub mint_currency: Option<AccountId>, 
+    
+    pub payment_split_percent: u8,
+
+    //keep track of the storage that accounts have payed
+    pub storage_deposits: LookupMap<AccountId, u128>,
+
+    //keep track of how many FTs each account has deposited in order to purchase NFTs with
+    pub ft_deposits: LookupMap<AccountId, Balance>,
 }
 
 const DATA_IMAGE_SVG_NEAR_ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 288 288'%3E%3Cg id='l' data-name='l'%3E%3Cpath d='M187.58,79.81l-30.1,44.69a3.2,3.2,0,0,0,4.75,4.2L191.86,103a1.2,1.2,0,0,1,2,.91v80.46a1.2,1.2,0,0,1-2.12.77L102.18,77.93A15.35,15.35,0,0,0,90.47,72.5H87.34A15.34,15.34,0,0,0,72,87.84V201.16A15.34,15.34,0,0,0,87.34,216.5h0a15.35,15.35,0,0,0,13.08-7.31l30.1-44.69a3.2,3.2,0,0,0-4.75-4.2L96.14,186a1.2,1.2,0,0,1-2-.91V104.61a1.2,1.2,0,0,1,2.12-.77l89.55,107.23a15.35,15.35,0,0,0,11.71,5.43h3.13A15.34,15.34,0,0,0,216,201.16V87.84A15.34,15.34,0,0,0,200.66,72.5h0A15.35,15.35,0,0,0,187.58,79.81Z'/%3E%3C/g%3E%3C/svg%3E";
+//the minimum storage to have a sale on the contract.
+const STORAGE_PER_SALE: u128 = 1000 * 10_000_000_000_000_000_000u128;
 
 #[derive(BorshSerialize, BorshStorageKey)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -51,6 +71,8 @@ enum StorageKey {
     TokenMetadata,
     Enumeration,
     Approval,
+    StorageDeposits,
+    FTDeposits,
 }
 
 #[near_bindgen]
@@ -70,11 +92,20 @@ impl Contract {
                 reference: None,
                 reference_hash: None,
             },
+            0,
+            None,
+            0,
         )
     }
 
     #[init]
-    pub fn new(owner_id: AccountId, metadata: NFTContractMetadata) -> Self {
+    pub fn new(
+        owner_id: AccountId, 
+        metadata: NFTContractMetadata,
+        mint_price: u128,
+        mint_currency: Option<AccountId>,
+        payment_split_percent: u8,
+    ) -> Self {
         require!(!env::state_exists(), "Already initialized");
         metadata.assert_valid();
         Self {
@@ -86,6 +117,11 @@ impl Contract {
                 Some(StorageKey::Approval),
             ),
             metadata: LazyOption::new(StorageKey::Metadata, Some(&metadata)),
+            mint_price,
+            mint_currency,
+            payment_split_percent,
+            storage_deposits: LookupMap::new(StorageKey::StorageDeposits),
+            ft_deposits: LookupMap::new(StorageKey::FTDeposits),
         }
     }
 
@@ -104,8 +140,158 @@ impl Contract {
         token_owner_id: AccountId,
         token_metadata: TokenMetadata,
     ) -> Token {
-        assert_eq!(env::predecessor_account_id(), self.tokens.owner_id, "Unauthorized");
+        let owner = env::predecessor_account_id(); 
+        assert_eq!(owner, self.tokens.owner_id, "Unauthorized");
+
+        if let Some(_) = self.mint_currency.clone() {
+            let amount = self.ft_deposits_of(owner);
+            require!(amount >= self.mint_price, "Insufficient price to mint");
+        } else {
+            let deposit: u128 = env::attached_deposit().as_yoctonear();
+            require!(deposit >= self.mint_price, "Insufficient price to mint");
+        }
+
+        let current_id = env::current_account_id();
+        let vault_amount = self.mint_price.checked_mul(self.payment_split_percent.into())
+            .unwrap().checked_div(100u128).unwrap();
+
+        // Deploy the vault contract
+        let vault_account_id: AccountId = format!("{}-{}", token_id, current_id).parse().unwrap();
+        Promise::new(vault_account_id.clone())
+            .create_account()
+            .deploy_contract(include_bytes!("./vault/vault.wasm").to_vec())
+            .then(
+                // Init the vault contract
+                Promise::new(vault_account_id.clone()).function_call(
+                    "init".to_string(),
+                    if let Some(ft_id) = self.mint_currency.clone() {
+                        json!({
+                            "ft_contract": ft_id.to_string()
+                        })
+                    } else {
+                        json!({})
+                    }.to_string().into_bytes().to_vec(),
+                    NearToken::from_yoctonear(1),
+                    Gas::from_tgas(20)
+                )
+                .then(
+                    // Deposit ft or near
+                    if let Some(ft_id) = self.mint_currency.clone() {
+                        Promise::new(ft_id).function_call(
+                            "ft_transfer_call".to_string(), 
+                            json!({
+                                "receiver_id": vault_account_id.to_string(),
+                                "amount": vault_amount.to_string(),
+                                "msg": "",
+                            }).to_string().into_bytes().to_vec(),
+                            NearToken::from_yoctonear(1),
+                            Gas::from_tgas(20),
+                        )
+                    } else {
+                        Promise::new(vault_account_id.clone()).function_call(
+                            "deposit_near".to_string(),
+                            json!({}).to_string().into_bytes().to_vec(),
+                            NearToken::from_yoctonear(vault_amount),
+                            Gas::from_tgas(20),
+                        )
+                    }
+                )
+            );
+
+        
+
+        // Transfer tokens to the vault contract
+        // Promise::new(vault_account_id.clone()).transfer(token_amount);
+
         self.tokens.internal_mint(token_id, token_owner_id, Some(token_metadata))
+    }
+
+    //Allows users to deposit storage. This is to cover the cost of storing sale objects on the contract
+    //Optional account ID is to users can pay for storage for other people.
+    #[payable]
+    pub fn storage_deposit(&mut self, account_id: Option<AccountId>) {
+        //get the account ID to pay for storage for
+        let storage_account_id = account_id 
+            //convert the valid account ID into an account ID
+            .map(|a| a.into())
+            //if we didn't specify an account ID, we simply use the caller of the function
+            .unwrap_or_else(env::predecessor_account_id);
+
+        //get the deposit value which is how much the user wants to add to their storage
+        let deposit: u128 = env::attached_deposit().as_yoctonear();
+
+        //make sure the deposit is greater than or equal to the minimum storage for a sale
+        assert!(
+            deposit >= STORAGE_PER_SALE,
+            "Requires minimum deposit of {}",
+            STORAGE_PER_SALE
+        );
+
+        //get the balance of the account (if the account isn't in the map we default to a balance of 0)
+        let mut balance: u128 = self.storage_deposits.get(&storage_account_id).unwrap_or(0);
+        //add the deposit to their balance
+        balance += deposit;
+        //insert the balance back into the map for that account ID
+        self.storage_deposits.insert(&storage_account_id, &balance);
+    }
+
+    // Burn an NFT by its token ID
+    #[payable]
+    pub fn burn(&mut self, token_id: TokenId) {
+        let owner = env::predecessor_account_id();
+
+        // Ensure the owner has the NFT
+        assert!(self.tokens.owner_by_id.contains_key(&token_id), "You don't own this NFT");
+
+        // Remove the NFT from the owner's account
+        self.tokens.owner_by_id.remove(&token_id);
+
+        // Remove token metadata (if applicable)
+        if let Some(metadata_map) = &mut self.tokens.token_metadata_by_id {
+            metadata_map.remove(&token_id);
+        }
+
+        // Remove the NFT from the tokens_per_owner map
+        if let Some(tokens_map) = &mut self.tokens.tokens_per_owner {
+            if let Some(mut owner_tokens) = tokens_map.get(&owner) {
+                owner_tokens.remove(&token_id);
+            }
+        }
+
+        // Remove any approvals associated with this NFT
+        if let Some(approvals_map) = &mut self.tokens.approvals_by_id {
+            approvals_map.remove(&token_id);
+        }
+
+        // Remove next approval ID (if applicable)
+        if let Some(next_approval_map) = &mut self.tokens.next_approval_id_by_id {
+            next_approval_map.remove(&token_id);
+        }
+
+        let current_id = env::current_account_id();
+        let vault_account_id: AccountId = format!("{}-{}", token_id, current_id).parse().unwrap();
+
+        Promise::new(vault_account_id.clone()).function_call(
+            "withdraw".to_string(),
+            json!({
+                "owner": owner.to_string()
+            }).to_string().into_bytes().to_vec(),
+            NearToken::from_yoctonear(1),
+            Gas::from_tgas(20)
+        );
+    }
+
+    //return how much storage an account has paid for
+    pub fn storage_balance_of(&self, account_id: AccountId) -> U128 {
+        U128(self.storage_deposits.get(&account_id).unwrap_or(0))
+    }
+
+    /// Get the amount of FTs the user has deposited into the contract
+    pub fn ft_deposits_of(
+        &self,
+        account_id: AccountId
+    ) -> u128 {
+        self.ft_deposits.get(&account_id).unwrap_or(0)
     }
 }
 
