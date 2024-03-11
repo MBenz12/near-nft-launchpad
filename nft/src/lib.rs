@@ -60,8 +60,9 @@ pub struct Contract {
 }
 
 const DATA_IMAGE_SVG_NEAR_ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 288 288'%3E%3Cg id='l' data-name='l'%3E%3Cpath d='M187.58,79.81l-30.1,44.69a3.2,3.2,0,0,0,4.75,4.2L191.86,103a1.2,1.2,0,0,1,2,.91v80.46a1.2,1.2,0,0,1-2.12.77L102.18,77.93A15.35,15.35,0,0,0,90.47,72.5H87.34A15.34,15.34,0,0,0,72,87.84V201.16A15.34,15.34,0,0,0,87.34,216.5h0a15.35,15.35,0,0,0,13.08-7.31l30.1-44.69a3.2,3.2,0,0,0-4.75-4.2L96.14,186a1.2,1.2,0,0,1-2-.91V104.61a1.2,1.2,0,0,1,2.12-.77l89.55,107.23a15.35,15.35,0,0,0,11.71,5.43h3.13A15.34,15.34,0,0,0,216,201.16V87.84A15.34,15.34,0,0,0,200.66,72.5h0A15.35,15.35,0,0,0,187.58,79.81Z'/%3E%3C/g%3E%3C/svg%3E";
+const NEAR_PER_STORAGE: u128 = 10_000_000_000_000_000_000u128;
 //the minimum storage to have a sale on the contract.
-const STORAGE_PER_SALE: u128 = 1000 * 10_000_000_000_000_000_000u128;
+const STORAGE_PER_SALE: u128 = 1000 * NEAR_PER_STORAGE;
 
 #[derive(BorshSerialize, BorshStorageKey)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -143,15 +144,20 @@ impl Contract {
         let owner = env::predecessor_account_id(); 
         assert_eq!(owner, self.tokens.owner_id, "Unauthorized");
 
+        let code = include_bytes!("./vault/vault.wasm").to_vec();
+        let contract_bytes = code.len() as u128;
+        let minimum_needed = NEAR_PER_STORAGE * contract_bytes;
+
+        let deposit: u128 = env::attached_deposit().as_yoctonear();
         if let Some(_) = self.mint_currency.clone() {
             let amount = self.ft_deposits_of(owner);
-            require!(amount >= self.mint_price, "Insufficient price to mint");
+            require!(deposit >= minimum_needed && amount >= self.mint_price, "Insufficient price to mint");
         } else {
-            let deposit: u128 = env::attached_deposit().as_yoctonear();
-            require!(deposit >= self.mint_price, "Insufficient price to mint");
+            require!(deposit >= self.mint_price + minimum_needed, "Insufficient price to mint");
         }
 
         let current_id = env::current_account_id();
+
         let vault_amount = self.mint_price.checked_mul(self.payment_split_percent.into())
             .unwrap().checked_div(100u128).unwrap();
 
@@ -159,46 +165,43 @@ impl Contract {
         let vault_account_id: AccountId = format!("{}-{}", token_id, current_id).parse().unwrap();
         Promise::new(vault_account_id.clone())
             .create_account()
-            .deploy_contract(include_bytes!("./vault/vault.wasm").to_vec())
-            .then(
+            .deploy_contract(code)
+            .transfer(NearToken::from_yoctonear(minimum_needed))
+            .function_call(
                 // Init the vault contract
-                Promise::new(vault_account_id.clone()).function_call(
-                    "init".to_string(),
-                    if let Some(ft_id) = self.mint_currency.clone() {
+                "init".to_string(),
+                if let Some(ft_id) = self.mint_currency.clone() {
+                    json!({
+                        "ft_contract": ft_id.to_string()
+                    })
+                } else {
+                    json!({})
+                }.to_string().into_bytes().to_vec(),
+                NearToken::from_yoctonear(1),
+                Gas::from_tgas(20)
+            )
+            .then(
+                // Deposit ft or near
+                if let Some(ft_id) = self.mint_currency.clone() {
+                    Promise::new(ft_id).function_call(
+                        "ft_transfer_call".to_string(), 
                         json!({
-                            "ft_contract": ft_id.to_string()
-                        })
-                    } else {
-                        json!({})
-                    }.to_string().into_bytes().to_vec(),
-                    NearToken::from_yoctonear(1),
-                    Gas::from_tgas(20)
-                )
-                .then(
-                    // Deposit ft or near
-                    if let Some(ft_id) = self.mint_currency.clone() {
-                        Promise::new(ft_id).function_call(
-                            "ft_transfer_call".to_string(), 
-                            json!({
-                                "receiver_id": vault_account_id.to_string(),
-                                "amount": vault_amount.to_string(),
-                                "msg": "",
-                            }).to_string().into_bytes().to_vec(),
-                            NearToken::from_yoctonear(1),
-                            Gas::from_tgas(20),
-                        )
-                    } else {
-                        Promise::new(vault_account_id.clone()).function_call(
-                            "deposit_near".to_string(),
-                            json!({}).to_string().into_bytes().to_vec(),
-                            NearToken::from_yoctonear(vault_amount),
-                            Gas::from_tgas(20),
-                        )
-                    }
-                )
+                            "receiver_id": vault_account_id.to_string(),
+                            "amount": vault_amount.to_string(),
+                            "msg": "",
+                        }).to_string().into_bytes().to_vec(),
+                        NearToken::from_yoctonear(1),
+                        Gas::from_tgas(20),
+                    )
+                } else {
+                    Promise::new(vault_account_id.clone()).function_call(
+                        "deposit_near".to_string(),
+                        json!({}).to_string().into_bytes().to_vec(),
+                        NearToken::from_yoctonear(vault_amount),
+                        Gas::from_tgas(20),
+                    )
+                }
             );
-
-        
 
         // Transfer tokens to the vault contract
         // Promise::new(vault_account_id.clone()).transfer(token_amount);
