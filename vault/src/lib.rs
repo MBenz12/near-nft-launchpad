@@ -114,11 +114,11 @@ impl FungibleTokenReceiver for Contract {
                 "ft_on_transfer should only be called via cross-contract call"
             );
             //make sure the owner ID is the signer. 
-            assert_eq!(
-                sender_id,
-                signer_id,
-                "owner_id should be signer_id"
-            );
+            // assert_eq!(
+            //     sender_id,
+            //     signer_id,
+            //     "owner_id should be signer_id"
+            // );
 
             self.amount = amount.0;
         }

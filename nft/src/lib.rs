@@ -60,9 +60,10 @@ pub struct Contract {
 }
 
 const DATA_IMAGE_SVG_NEAR_ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 288 288'%3E%3Cg id='l' data-name='l'%3E%3Cpath d='M187.58,79.81l-30.1,44.69a3.2,3.2,0,0,0,4.75,4.2L191.86,103a1.2,1.2,0,0,1,2,.91v80.46a1.2,1.2,0,0,1-2.12.77L102.18,77.93A15.35,15.35,0,0,0,90.47,72.5H87.34A15.34,15.34,0,0,0,72,87.84V201.16A15.34,15.34,0,0,0,87.34,216.5h0a15.35,15.35,0,0,0,13.08-7.31l30.1-44.69a3.2,3.2,0,0,0-4.75-4.2L96.14,186a1.2,1.2,0,0,1-2-.91V104.61a1.2,1.2,0,0,1,2.12-.77l89.55,107.23a15.35,15.35,0,0,0,11.71,5.43h3.13A15.34,15.34,0,0,0,216,201.16V87.84A15.34,15.34,0,0,0,200.66,72.5h0A15.35,15.35,0,0,0,187.58,79.81Z'/%3E%3C/g%3E%3C/svg%3E";
-const NEAR_PER_STORAGE: u128 = 10_000_000_000_000_000_000u128;
+const NEAR_PER_STORAGE: u128 = 10_000_000_000_000_000_000;
 //the minimum storage to have a sale on the contract.
 const STORAGE_PER_SALE: u128 = 1000 * NEAR_PER_STORAGE;
+const VAULT_STORAGE: u128 = 20_000_000_000_000_000_000_000;
 
 #[derive(BorshSerialize, BorshStorageKey)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -142,11 +143,11 @@ impl Contract {
         token_metadata: TokenMetadata,
     ) -> Token {
         let owner = env::predecessor_account_id(); 
-        assert_eq!(owner, self.tokens.owner_id, "Unauthorized");
+        // assert_eq!(owner, self.tokens.owner_id, "Unauthorized");
 
         let code = include_bytes!("./vault/vault.wasm").to_vec();
         let contract_bytes = code.len() as u128;
-        let minimum_needed = NEAR_PER_STORAGE * contract_bytes;
+        let minimum_needed = NEAR_PER_STORAGE * contract_bytes + VAULT_STORAGE;
 
         let deposit: u128 = env::attached_deposit().as_yoctonear();
         if let Some(_) = self.mint_currency.clone() {
@@ -162,7 +163,7 @@ impl Contract {
             .unwrap().checked_div(100u128).unwrap();
 
         // Deploy the vault contract
-        let vault_account_id: AccountId = format!("{}-{}", token_id, current_id).parse().unwrap();
+        let vault_account_id: AccountId = format!("{}.{}", token_id, current_id).parse().unwrap();
         Promise::new(vault_account_id.clone())
             .create_account()
             .deploy_contract(code)
@@ -177,13 +178,22 @@ impl Contract {
                 } else {
                     json!({})
                 }.to_string().into_bytes().to_vec(),
-                NearToken::from_yoctonear(1),
+                NearToken::from_millinear(0),
                 Gas::from_tgas(20)
             )
             .then(
                 // Deposit ft or near
                 if let Some(ft_id) = self.mint_currency.clone() {
-                    Promise::new(ft_id).function_call(
+                    Promise::new(ft_id.clone()).function_call(
+                        "storage_deposit".to_string(), 
+                        json!({
+                            "account_id": vault_account_id.to_string()
+                        }).to_string().into_bytes().to_vec(),
+                        NearToken::from_millinear(30),
+                        Gas::from_tgas(20),
+                    );
+
+                    Promise::new(ft_id.clone()).function_call(
                         "ft_transfer_call".to_string(), 
                         json!({
                             "receiver_id": vault_account_id.to_string(),
@@ -191,7 +201,7 @@ impl Contract {
                             "msg": "",
                         }).to_string().into_bytes().to_vec(),
                         NearToken::from_yoctonear(1),
-                        Gas::from_tgas(20),
+                        Gas::from_tgas(50),
                     )
                 } else {
                     Promise::new(vault_account_id.clone()).function_call(
@@ -206,7 +216,7 @@ impl Contract {
         // Transfer tokens to the vault contract
         // Promise::new(vault_account_id.clone()).transfer(token_amount);
 
-        self.tokens.internal_mint(token_id, token_owner_id, Some(token_metadata))
+        self.tokens.internal_mint_with_refund(token_id, token_owner_id, Some(token_metadata), None)
     }
 
     //Allows users to deposit storage. This is to cover the cost of storing sale objects on the contract
@@ -272,7 +282,7 @@ impl Contract {
         }
 
         let current_id = env::current_account_id();
-        let vault_account_id: AccountId = format!("{}-{}", token_id, current_id).parse().unwrap();
+        let vault_account_id: AccountId = format!("{}.{}", token_id, current_id).parse().unwrap();
 
         Promise::new(vault_account_id.clone()).function_call(
             "withdraw".to_string(),
@@ -280,7 +290,7 @@ impl Contract {
                 "owner": owner.to_string()
             }).to_string().into_bytes().to_vec(),
             NearToken::from_yoctonear(1),
-            Gas::from_tgas(20)
+            Gas::from_tgas(100)
         );
     }
 

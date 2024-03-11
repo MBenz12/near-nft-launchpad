@@ -9,7 +9,8 @@ use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata
 };
 
-const NEAR_PER_STORAGE: u128 = 10_000_000_000_000_000_000u128;
+const NEAR_PER_STORAGE: u128 = 10_000_000_000_000_000_000;
+const NFT_CONTRACT_STORAGE: u128 = 20_000_000_000_000_000_000_000;
 
 // Define the contract structure
 #[near_bindgen]
@@ -41,16 +42,16 @@ impl Contract {
 
         let code = include_bytes!("./nft/nft.wasm").to_vec();
         let contract_bytes = code.len() as u128;
-        let minimum_needed = NEAR_PER_STORAGE * contract_bytes;
+        let minimum_needed = NEAR_PER_STORAGE * contract_bytes + NFT_CONTRACT_STORAGE;
 
         // Deploy the nft contract
-        let nft_contract_id: AccountId = format!("{}-{}", metadata.symbol, current_id).parse().unwrap();
+        let nft_contract_id: AccountId = format!("{}.{}", metadata.symbol.to_lowercase(), current_id).parse().unwrap();
         Promise::new(nft_contract_id.clone())
             .create_account()
             .transfer(NearToken::from_yoctonear(minimum_needed))
             .deploy_contract(code)
             .function_call(
-                "init".to_string(),
+                "new".to_string(),
                 if let Some(mint_currency) = mint_currency.clone() {
                     json!({
                         "owner_id": owner.to_string(),
