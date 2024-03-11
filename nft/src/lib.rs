@@ -93,9 +93,9 @@ impl Contract {
                 reference: None,
                 reference_hash: None,
             },
-            0,
+            U128(0),
             None,
-            0,
+            U128(0),
         )
     }
 
@@ -103,9 +103,9 @@ impl Contract {
     pub fn new(
         owner_id: AccountId, 
         metadata: NFTContractMetadata,
-        mint_price: u128,
+        mint_price: U128,
         mint_currency: Option<AccountId>,
-        payment_split_percent: u8,
+        payment_split_percent: U128,
     ) -> Self {
         require!(!env::state_exists(), "Already initialized");
         metadata.assert_valid();
@@ -118,9 +118,9 @@ impl Contract {
                 Some(StorageKey::Approval),
             ),
             metadata: LazyOption::new(StorageKey::Metadata, Some(&metadata)),
-            mint_price,
+            mint_price: mint_price.0,
             mint_currency,
-            payment_split_percent,
+            payment_split_percent: payment_split_percent.0 as u8,
             storage_deposits: LookupMap::new(StorageKey::StorageDeposits),
             ft_deposits: LookupMap::new(StorageKey::FTDeposits),
         }

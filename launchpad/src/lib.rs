@@ -4,6 +4,7 @@ use near_sdk::{
     near_bindgen, AccountId, env, Promise, NearToken, Gas,
     serde_json::json,
 };
+use near_sdk::json_types::U128;
 use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata
 };
@@ -31,9 +32,9 @@ impl Contract {
     pub fn launch(
         &mut self,
         metadata: NFTContractMetadata,
-        mint_price: u128,
+        mint_price: U128,
         mint_currency: Option<AccountId>,
-        payment_split_percent: u8,
+        payment_split_percent: U128,
     ) {
         let current_id = env::current_account_id();
         let owner = env::predecessor_account_id(); 
@@ -54,16 +55,16 @@ impl Contract {
                     json!({
                         "owner_id": owner.to_string(),
                         "metadata": metadata,
-                        "mint_price": mint_price.to_string(),
+                        "mint_price": mint_price.0.to_string(),
                         "mint_currency": mint_currency.to_string(),
-                        "payment_split_percent": payment_split_percent.to_string(),
+                        "payment_split_percent": payment_split_percent.0.to_string(),
                     })
                 } else {
                     json!({
                         "owner_id": owner.to_string(),
                         "metadata": metadata,
-                        "mint_price": mint_price.to_string(),
-                        "payment_split_percent": payment_split_percent.to_string(),
+                        "mint_price": mint_price.0.to_string(),
+                        "payment_split_percent": payment_split_percent.0.to_string(),
                     })
                 }.to_string().into_bytes().to_vec(),
                 NearToken::from_yoctonear(0),
