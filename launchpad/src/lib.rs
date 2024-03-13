@@ -5,6 +5,7 @@ use near_sdk::{
     serde_json::json,
 };
 use near_sdk::json_types::U128;
+use near_sdk::collections::{LookupMap, UnorderedSet};
 use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata
 };
@@ -17,12 +18,14 @@ const NFT_CONTRACT_STORAGE: u128 = 20_000_000_000_000_000_000_000;
 #[derive(BorshDeserialize, BorshSerialize)]
 #[borsh(crate = "near_sdk::borsh")]
 pub struct Contract {
-    
+    pub collections_by_creator: LookupMap<AccountId, Vec<AccountId>>,
 }
 
 impl Default for Contract {
     fn default() -> Self {
-        Self {}
+        Self {
+            collections_by_creator: LookupMap::new(b"CollectionsByCreator".to_vec()),
+        }
     }
 }
 
@@ -45,7 +48,11 @@ impl Contract {
         let minimum_needed = NEAR_PER_STORAGE * contract_bytes + NFT_CONTRACT_STORAGE;
 
         // Deploy the nft contract
-        let nft_contract_id: AccountId = format!("{}.{}", metadata.symbol.to_lowercase(), current_id).parse().unwrap();
+        let nft_contract_id: AccountId = format!("{}-{}.{}", owner.to_string(), metadata.symbol.to_lowercase(), current_id).parse().unwrap();
+
+        let mut existing_collections = self.collections_by_creator.get(&owner).unwrap_or(vec![]);
+        existing_collections.push(&nft_contract_id);
+
         Promise::new(nft_contract_id.clone())
             .create_account()
             .transfer(NearToken::from_yoctonear(minimum_needed))
@@ -71,5 +78,8 @@ impl Contract {
                 NearToken::from_yoctonear(0),
                 Gas::from_tgas(20)
             );
+    }
+    pub fn get_collections_by_creator(&self, creator_id: AccountId) -> Vec<AccountId> {
+        self.collections_by_creator.get(&creator_id).unwrap_or(vec![])
     }
 }
