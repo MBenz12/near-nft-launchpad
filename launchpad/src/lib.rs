@@ -74,6 +74,7 @@ impl Contract {
         
             Event::Launch {
                 creator_id: &owner,
+                collection_id: &nft_contract_id,
                 mint_price: &mint_price,
                 mint_currency: mint_currency.as_ref(),
                 name: &metadata.name,
@@ -90,6 +91,7 @@ impl Contract {
 pub enum Event<'a> {
     Launch {
         creator_id: &'a AccountId,
+        collection_id: &'a AccountId,
         mint_price: &'a U128,
         name: &'a String,
         symbol: &'a String,
