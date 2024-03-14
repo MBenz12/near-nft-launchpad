@@ -44,7 +44,7 @@ impl Contract {
         let minimum_needed = NEAR_PER_STORAGE * contract_bytes + NFT_CONTRACT_STORAGE;
 
         // Deploy the nft contract
-        let nft_contract_id: AccountId = format!("{}-{}.{}", owner.to_string(), metadata.symbol.to_lowercase(), current_id).parse().unwrap();
+        let nft_contract_id: AccountId = format!("{}.{}", metadata.symbol.to_lowercase(), current_id).parse().unwrap();
 
         Promise::new(nft_contract_id.clone())
             .create_account()
