@@ -79,6 +79,7 @@ impl Contract {
                 mint_currency: mint_currency.as_ref(),
                 name: &metadata.name,
                 symbol: &metadata.symbol,
+                base_uri: &metadata.base_uri,
             }
             .emit();
     }
@@ -95,6 +96,8 @@ pub enum Event<'a> {
         mint_price: &'a U128,
         name: &'a String,
         symbol: &'a String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base_uri: &'a Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         mint_currency: Option<&'a AccountId>,
     }
