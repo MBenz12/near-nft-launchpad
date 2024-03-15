@@ -76,6 +76,7 @@ impl Contract {
                 creator_id: &owner,
                 collection_id: &nft_contract_id,
                 mint_price: &mint_price,
+                payment_split_percent: &payment_split_percent,
                 mint_currency: mint_currency.as_ref(),
                 name: &metadata.name,
                 symbol: &metadata.symbol,
@@ -94,6 +95,7 @@ pub enum Event<'a> {
         creator_id: &'a AccountId,
         collection_id: &'a AccountId,
         mint_price: &'a U128,
+        payment_split_percent: &'a U128,
         name: &'a String,
         symbol: &'a String,
         #[serde(skip_serializing_if = "Option::is_none")]
