@@ -24,6 +24,7 @@ use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata, NonFungibleTokenMetadataProvider, TokenMetadata, NFT_METADATA_SPEC,
 };
 use near_contract_standards::non_fungible_token::NonFungibleToken;
+use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::{Token, TokenId};
 use near_contract_standards::fungible_token::Balance;
 use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
@@ -215,8 +216,9 @@ impl Contract {
 
         // Transfer tokens to the vault contract
         // Promise::new(vault_account_id.clone()).transfer(token_amount);
-
-        self.tokens.internal_mint_with_refund(token_id, token_owner_id, Some(token_metadata), None)
+        let token = self.tokens.internal_mint_with_refund(token_id, token_owner_id, Some(token_metadata), None);
+        NftMint { owner_id: &token.owner_id, token_ids: &[&token.token_id], memo: None }.emit();
+        token
     }
 
     //Allows users to deposit storage. This is to cover the cost of storing sale objects on the contract
