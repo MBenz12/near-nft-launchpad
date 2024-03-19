@@ -32,6 +32,7 @@ impl Contract {
     pub fn launch(
         &mut self,
         metadata: NFTContractMetadata,
+        total_supply: U128,
         mint_price: U128,
         mint_currency: Option<AccountId>,
         payment_split_percent: U128,
@@ -56,6 +57,7 @@ impl Contract {
                     json!({
                         "owner_id": owner.to_string(),
                         "metadata": metadata,
+                        "total_supply": total_supply.0.to_string(),
                         "mint_price": mint_price.0.to_string(),
                         "mint_currency": mint_currency.to_string(),
                         "payment_split_percent": payment_split_percent.0.to_string(),
@@ -64,6 +66,7 @@ impl Contract {
                     json!({
                         "owner_id": owner.to_string(),
                         "metadata": metadata,
+                        "total_supply": total_supply.0.to_string(),
                         "mint_price": mint_price.0.to_string(),
                         "payment_split_percent": payment_split_percent.0.to_string(),
                     })
@@ -75,6 +78,7 @@ impl Contract {
             Event::Launch {
                 creator_id: &owner,
                 collection_id: &nft_contract_id,
+                total_supply: &total_supply,
                 mint_price: &mint_price,
                 payment_split_percent: &payment_split_percent,
                 mint_currency: mint_currency.as_ref(),
@@ -94,6 +98,7 @@ pub enum Event<'a> {
     Launch {
         creator_id: &'a AccountId,
         collection_id: &'a AccountId,
+        total_supply: &'a U128,
         mint_price: &'a U128,
         payment_split_percent: &'a U128,
         name: &'a String,

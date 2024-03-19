@@ -46,6 +46,10 @@ pub struct Contract {
 
     pub metadata: LazyOption<NFTContractMetadata>,
 
+    pub index: u128,
+
+    pub total_supply: u128,
+
     pub mint_price: u128,
     
     //which fungible token can be used to purchase NFTs
@@ -98,6 +102,7 @@ impl Contract {
             U128(0),
             None,
             U128(0),
+            U128(0),
         )
     }
 
@@ -108,6 +113,7 @@ impl Contract {
         mint_price: U128,
         mint_currency: Option<AccountId>,
         payment_split_percent: U128,
+        total_supply: U128,
     ) -> Self {
         require!(!env::state_exists(), "Already initialized");
         metadata.assert_valid();
@@ -120,6 +126,8 @@ impl Contract {
                 Some(StorageKey::Approval),
             ),
             metadata: LazyOption::new(StorageKey::Metadata, Some(&metadata)),
+            index: 0,
+            total_supply: total_supply.0,
             mint_price: mint_price.0,
             mint_currency,
             payment_split_percent: payment_split_percent.0 as u8,
@@ -152,7 +160,7 @@ impl Contract {
 
         let deposit: u128 = env::attached_deposit().as_yoctonear();
         if let Some(_) = self.mint_currency.clone() {
-            let amount = self.ft_deposits_of(owner);
+            let amount = self.ft_deposits_of(owner.clone());
             require!(deposit >= minimum_needed && amount >= self.mint_price, "Insufficient price to mint");
         } else {
             require!(deposit >= self.mint_price + minimum_needed, "Insufficient price to mint");
@@ -162,6 +170,8 @@ impl Contract {
 
         let vault_amount = self.mint_price.checked_mul(self.payment_split_percent.into())
             .unwrap().checked_div(100u128).unwrap();
+
+        let owner_amount = self.mint_price.checked_sub(vault_amount).unwrap();
 
         // Deploy the vault contract
         let vault_account_id: AccountId = format!("{}.{}", token_id, current_id).parse().unwrap();
@@ -203,6 +213,26 @@ impl Contract {
                         }).to_string().into_bytes().to_vec(),
                         NearToken::from_yoctonear(1),
                         Gas::from_tgas(50),
+                    );
+
+                    Promise::new(ft_id.clone()).function_call(
+                        "storage_deposit".to_string(), 
+                        json!({
+                            "account_id": owner.clone().to_string()
+                        }).to_string().into_bytes().to_vec(),
+                        NearToken::from_millinear(30),
+                        Gas::from_tgas(20),
+                    );
+
+                    Promise::new(ft_id.clone()).function_call(
+                        "ft_transfer".to_string(), 
+                        json!({
+                            "receiver_id": owner.clone().to_string(),
+                            "amount": owner_amount.to_string(),
+                            "msg": "",
+                        }).to_string().into_bytes().to_vec(),
+                        NearToken::from_yoctonear(1),
+                        Gas::from_tgas(50),
                     )
                 } else {
                     Promise::new(vault_account_id.clone()).function_call(
@@ -210,12 +240,17 @@ impl Contract {
                         json!({}).to_string().into_bytes().to_vec(),
                         NearToken::from_yoctonear(vault_amount),
                         Gas::from_tgas(20),
-                    )
+                    );
+
+                    Promise::new(owner.clone()).transfer(NearToken::from_yoctonear(owner_amount))
                 }
             );
 
-        // Transfer tokens to the vault contract
-        // Promise::new(vault_account_id.clone()).transfer(token_amount);
+        self.index = self.index.checked_add(1).unwrap();
+        if self.total_supply > 0 {
+            require!(self.total_supply >= self.index, "Exceeded total supply");
+        }
+
         let token = self.tokens.internal_mint_with_refund(token_id, token_owner_id, Some(token_metadata), None);
         NftMint { owner_id: &token.owner_id, token_ids: &[&token.token_id], memo: None }.emit();
         token
@@ -307,6 +342,14 @@ impl Contract {
         account_id: AccountId
     ) -> u128 {
         self.ft_deposits.get(&account_id).unwrap_or(0)
+    }
+
+    pub fn index(&self) -> u128 {
+        self.index
+    }
+
+    pub fn total_supply(&self) -> u128 {
+        self.total_supply
     }
 }
 
