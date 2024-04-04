@@ -150,6 +150,7 @@ impl Contract {
         token_owner_id: AccountId,
         token_metadata: TokenMetadata,
     ) -> Token {
+        let collection_owner = &self.tokens.owner_id;
         let owner = env::predecessor_account_id(); 
         // assert_eq!(owner, self.tokens.owner_id, "Unauthorized");
 
@@ -217,7 +218,7 @@ impl Contract {
                     Promise::new(ft_id.clone()).function_call(
                         "storage_deposit".to_string(), 
                         json!({
-                            "account_id": owner.clone().to_string()
+                            "account_id": collection_owner.clone().to_string()
                         }).to_string().into_bytes().to_vec(),
                         NearToken::from_millinear(30),
                         Gas::from_tgas(20),
@@ -226,7 +227,7 @@ impl Contract {
                     Promise::new(ft_id.clone()).function_call(
                         "ft_transfer".to_string(), 
                         json!({
-                            "receiver_id": owner.clone().to_string(),
+                            "receiver_id": collection_owner.clone().to_string(),
                             "amount": owner_amount.to_string(),
                             "msg": "",
                         }).to_string().into_bytes().to_vec(),
@@ -234,14 +235,13 @@ impl Contract {
                         Gas::from_tgas(50),
                     )
                 } else {
+                    Promise::new(collection_owner.clone()).transfer(NearToken::from_yoctonear(owner_amount));
                     Promise::new(vault_account_id.clone()).function_call(
                         "deposit_near".to_string(),
                         json!({}).to_string().into_bytes().to_vec(),
                         NearToken::from_yoctonear(vault_amount),
                         Gas::from_tgas(20),
-                    );
-
-                    Promise::new(owner.clone()).transfer(NearToken::from_yoctonear(owner_amount))
+                    )
                 }
             );
 
@@ -296,26 +296,35 @@ impl Contract {
         self.tokens.owner_by_id.remove(&token_id);
 
         // Remove token metadata (if applicable)
-        if let Some(metadata_map) = &mut self.tokens.token_metadata_by_id {
-            metadata_map.remove(&token_id);
-        }
-
+        self.tokens
+            .token_metadata_by_id
+            .as_mut()
+            .and_then(|by_id| by_id.remove(&token_id));
+        
         // Remove the NFT from the tokens_per_owner map
-        if let Some(tokens_map) = &mut self.tokens.tokens_per_owner {
-            if let Some(mut owner_tokens) = tokens_map.get(&owner) {
-                owner_tokens.remove(&token_id);
+        if let Some(tokens_per_owner) = &mut self.tokens.tokens_per_owner {
+            let mut owner_tokens = tokens_per_owner.get(&owner).unwrap_or_else(|| {
+                env::panic_str("Unable to access tokens per owner in unguarded call.")
+            });
+            owner_tokens.remove(&token_id);
+            if owner_tokens.is_empty() {
+                tokens_per_owner.remove(&owner);
+            } else {
+                tokens_per_owner.insert(&owner, &owner_tokens);
             }
         }
-
+        
         // Remove any approvals associated with this NFT
-        if let Some(approvals_map) = &mut self.tokens.approvals_by_id {
-            approvals_map.remove(&token_id);
-        }
+        self.tokens
+            .approvals_by_id
+            .as_mut()
+            .and_then(|by_id| by_id.remove(&token_id.clone()));
 
         // Remove next approval ID (if applicable)
-        if let Some(next_approval_map) = &mut self.tokens.next_approval_id_by_id {
-            next_approval_map.remove(&token_id);
-        }
+        self.tokens
+            .next_approval_id_by_id
+            .as_mut()
+            .and_then(|by_id| by_id.remove(&token_id.clone()));
 
         let current_id = env::current_account_id();
         let vault_account_id: AccountId = format!("{}.{}", token_id, current_id).parse().unwrap();

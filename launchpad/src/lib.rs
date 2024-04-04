@@ -11,7 +11,7 @@ use near_contract_standards::non_fungible_token::metadata::{
 use near_sdk::serde::Serialize;
 
 const NEAR_PER_STORAGE: u128 = 10_000_000_000_000_000_000;
-const NFT_CONTRACT_STORAGE: u128 = 20_000_000_000_000_000_000_000;
+const NFT_CONTRACT_STORAGE: u128 = 30_000_000_000_000_000_000_000;
 
 // Define the contract structure
 #[near_bindgen]
