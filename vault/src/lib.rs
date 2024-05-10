@@ -48,19 +48,32 @@ impl Contract {
     pub fn withdraw(
         &mut self,      
         owner: AccountId,
+        burn_fee: U128,
     ) {
         assert_eq!(
             env::predecessor_account_id(),
             self.owner_contract,
             "Only the owner contract can withdraw"
         );
-        
+        let amount_to_holders: u128 = self.amount
+            .checked_mul(burn_fee.0).unwrap()
+            .checked_div(100u128).unwrap();
+        let amount_to_owner = self.amount.checked_sub(amount_to_holders).unwrap();
         if let Some(ft_contract) = &self.ft_contract {
             Promise::new(ft_contract.clone()).function_call(
                 "ft_transfer".to_string(), 
                 json!({
                     "receiver_id": owner.to_string(),
-                    "amount": self.amount.to_string(),                    
+                    "amount": amount_to_owner.to_string(),                    
+                }).to_string().into_bytes().to_vec(),
+                NearToken::from_yoctonear(1),
+                Gas::from_tgas(20),
+            );
+            Promise::new(ft_contract.clone()).function_call(
+                "ft_transfer".to_string(), 
+                json!({
+                    "receiver_id": self.owner_contract.to_string(),
+                    "amount": amount_to_holders.to_string(),                    
                 }).to_string().into_bytes().to_vec(),
                 NearToken::from_yoctonear(1),
                 Gas::from_tgas(20),
@@ -72,7 +85,8 @@ impl Contract {
                 Gas::from_tgas(20),
             );
         } else {
-            Promise::new(owner).transfer(NearToken::from_yoctonear(self.amount));
+            Promise::new(owner).transfer(NearToken::from_yoctonear(amount_to_owner));
+            Promise::new(self.owner_contract.clone()).transfer(NearToken::from_yoctonear(amount_to_holders));
         }
         self.amount = 0;
     }

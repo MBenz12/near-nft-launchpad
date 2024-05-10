@@ -36,6 +36,7 @@ impl Contract {
         mint_price: U128,
         mint_currency: Option<AccountId>,
         payment_split_percent: U128,
+        burn_fee: U128,
     ) {
         let current_id = env::current_account_id();
         let owner = env::predecessor_account_id(); 
@@ -61,6 +62,7 @@ impl Contract {
                         "mint_price": mint_price.0.to_string(),
                         "mint_currency": mint_currency.to_string(),
                         "payment_split_percent": payment_split_percent.0.to_string(),
+                        "burn_fee": burn_fee.0.to_string(),
                     })
                 } else {
                     json!({
@@ -69,6 +71,7 @@ impl Contract {
                         "total_supply": total_supply.0.to_string(),
                         "mint_price": mint_price.0.to_string(),
                         "payment_split_percent": payment_split_percent.0.to_string(),
+                        "burn_fee": burn_fee.0.to_string(),
                     })
                 }.to_string().into_bytes().to_vec(),
                 NearToken::from_yoctonear(0),

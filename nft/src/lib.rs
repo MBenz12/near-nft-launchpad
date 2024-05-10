@@ -28,7 +28,7 @@ use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::{Token, TokenId};
 use near_contract_standards::fungible_token::Balance;
 use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{LazyOption, LookupMap};
+use near_sdk::collections::{LazyOption, LookupMap, UnorderedSet};
 use near_sdk::json_types::U128;
 use near_sdk::{
     env, near_bindgen, require, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue, NearToken, Gas, 
@@ -55,13 +55,19 @@ pub struct Contract {
     //which fungible token can be used to purchase NFTs
     pub mint_currency: Option<AccountId>, 
     
-    pub payment_split_percent: u8,
+    pub payment_split_percent: u128,
 
     //keep track of the storage that accounts have payed
     pub storage_deposits: LookupMap<AccountId, u128>,
 
     //keep track of how many FTs each account has deposited in order to purchase NFTs with
     pub ft_deposits: LookupMap<AccountId, Balance>,
+
+    pub burn_fee: u128,
+
+    pub balances_by_owner: LookupMap<AccountId, Balance>,
+
+    pub holders: UnorderedSet<AccountId>,
 }
 
 const NEAR_PER_STORAGE: u128 = 10_000_000_000_000_000_000;
@@ -79,32 +85,12 @@ enum StorageKey {
     Approval,
     StorageDeposits,
     FTDeposits,
+    BalancesByOwner,
+    Holders,
 }
 
 #[near_bindgen]
 impl Contract {
-    /// Initializes the contract owned by `owner_id` with
-    /// default metadata (for example purposes only).
-    // #[init]
-    // pub fn new_default_meta(owner_id: AccountId) -> Self {
-    //     Self::new(
-    //         owner_id,
-    //         NFTContractMetadata {
-    //             spec: NFT_METADATA_SPEC.to_string(),
-    //             name: "Example NEAR non-fungible token".to_string(),
-    //             symbol: "EXAMPLE".to_string(),
-    //             icon: Some(DATA_IMAGE_SVG_NEAR_ICON.to_string()),
-    //             base_uri: None,
-    //             reference: None,
-    //             reference_hash: None,
-    //         },
-    //         U128(0),
-    //         None,
-    //         U128(0),
-    //         U128(0),
-    //     )
-    // }
-
     #[init]
     pub fn new(
         owner_id: AccountId, 
@@ -113,6 +99,7 @@ impl Contract {
         mint_currency: Option<AccountId>,
         payment_split_percent: U128,
         total_supply: U128,
+        burn_fee: U128,
     ) -> Self {
         require!(!env::state_exists(), "Already initialized");
         metadata.assert_valid();
@@ -129,9 +116,12 @@ impl Contract {
             total_supply: total_supply.0,
             mint_price: mint_price.0,
             mint_currency,
-            payment_split_percent: payment_split_percent.0 as u8,
+            payment_split_percent: payment_split_percent.0,
             storage_deposits: LookupMap::new(StorageKey::StorageDeposits),
             ft_deposits: LookupMap::new(StorageKey::FTDeposits),
+            burn_fee: burn_fee.0,
+            balances_by_owner: LookupMap::new(StorageKey::BalancesByOwner),
+            holders: UnorderedSet::new(StorageKey::Holders),
         }
     }
 
@@ -152,6 +142,7 @@ impl Contract {
     ) -> Token {
         let collection_owner = &self.tokens.owner_id;
         let owner = env::predecessor_account_id(); 
+        self.holders.insert(&owner);
         // assert_eq!(owner, self.tokens.owner_id, "Unauthorized");
 
         let code = include_bytes!("./vault/vault.wasm").to_vec();
@@ -168,7 +159,7 @@ impl Contract {
 
         let current_id = env::current_account_id();
 
-        let vault_amount = self.mint_price.checked_mul(self.payment_split_percent.into())
+        let vault_amount = self.mint_price.checked_mul(self.payment_split_percent)
             .unwrap().checked_div(100u128).unwrap();
 
         let owner_amount = self.mint_price.checked_sub(vault_amount).unwrap();
@@ -302,6 +293,7 @@ impl Contract {
             .and_then(|by_id| by_id.remove(&token_id));
         
         // Remove the NFT from the tokens_per_owner map
+        let mut removed = false;
         if let Some(tokens_per_owner) = &mut self.tokens.tokens_per_owner {
             let mut owner_tokens = tokens_per_owner.get(&owner).unwrap_or_else(|| {
                 env::panic_str("Unable to access tokens per owner in unguarded call.")
@@ -309,6 +301,8 @@ impl Contract {
             owner_tokens.remove(&token_id);
             if owner_tokens.is_empty() {
                 tokens_per_owner.remove(&owner);
+                self.holders.remove(&owner);
+                removed = true;
             } else {
                 tokens_per_owner.insert(&owner, &owner_tokens);
             }
@@ -326,13 +320,96 @@ impl Contract {
             .as_mut()
             .and_then(|by_id| by_id.remove(&token_id.clone()));
 
+        // Update Balance for holders
+        let mut holders_count: u128 = self.holders.len() as u128;
+        if removed == false {
+            holders_count -= 1;
+        }
+        let amount_to_holder: u128 = if holders_count == 0 {
+            0u128
+        } else { 
+            self.mint_price
+                .checked_mul(self.payment_split_percent).unwrap()
+                .checked_mul(self.burn_fee).unwrap()
+                .checked_div(10000u128).unwrap()
+                .checked_div(holders_count).unwrap()
+        };
+
+        env::log_str(&format!("Total holders count: {}", holders_count));
+        env::log_str(&format!("Amount to each holder: {}", amount_to_holder));
+
+        for other in self.holders.iter() {
+            if other != owner {
+                let mut balance = self.balances_by_owner.get(&other).unwrap_or(0);
+                balance = balance.checked_add(amount_to_holder).unwrap();
+                self.balances_by_owner.insert(&other, &balance);
+            }
+        }
+
         let current_id = env::current_account_id();
         let vault_account_id: AccountId = format!("{}.{}", token_id, current_id).parse().unwrap();
 
         Promise::new(vault_account_id.clone()).function_call(
             "withdraw".to_string(),
             json!({
-                "owner": owner.to_string()
+                "owner": owner.to_string(),
+                "burn_fee": self.burn_fee.to_string(),
+            }).to_string().into_bytes().to_vec(),
+            NearToken::from_yoctonear(1),
+            Gas::from_tgas(100)
+        );
+    }
+
+    #[payable]
+    pub fn withdraw(&mut self) {
+        let owner = env::predecessor_account_id();
+        let balance: u128 = self.balances_by_owner.get(&owner).unwrap_or(0);
+
+        if balance > 0 {
+            // Deposit ft or near
+            if let Some(ft_id) = self.mint_currency.clone() {
+                Promise::new(ft_id.clone()).function_call(
+                    "storage_deposit".to_string(), 
+                    json!({
+                        "account_id": owner.to_string()
+                    }).to_string().into_bytes().to_vec(),
+                    NearToken::from_millinear(30),
+                    Gas::from_tgas(20),
+                );
+
+                Promise::new(ft_id.clone()).function_call(
+                    "ft_transfer_call".to_string(), 
+                    json!({
+                        "receiver_id": owner.to_string(),
+                        "amount": balance.to_string(),
+                        "msg": "",
+                    }).to_string().into_bytes().to_vec(),
+                    NearToken::from_yoctonear(1),
+                    Gas::from_tgas(50),
+                );
+            } else {
+                Promise::new(owner.clone()).transfer(NearToken::from_yoctonear(balance));
+            }
+
+            self.balances_by_owner.insert(&owner, &0u128).unwrap();
+        }
+    }
+
+    #[payable]
+    pub fn withdraw_from_vault(&mut self, token_id: TokenId, percent: U128) {
+        let owner = env::predecessor_account_id();
+        let amount: u128 = self.mint_price
+            .checked_mul(percent.0).unwrap()
+            .checked_div(100u128).unwrap();
+
+        let current_id = env::current_account_id();
+        let vault_account_id: AccountId = format!("{}.{}", token_id, current_id).parse().unwrap();
+        
+        Promise::new(vault_account_id.clone()).function_call(
+            "withdraw".to_string(),
+            json!({
+                "owner": owner.to_string(),
+                "burn_fee": self.burn_fee.to_string(),
             }).to_string().into_bytes().to_vec(),
             NearToken::from_yoctonear(1),
             Gas::from_tgas(100)
@@ -358,6 +435,10 @@ impl Contract {
 
     pub fn total_supply(&self) -> u128 {
         self.total_supply
+    }
+
+    pub fn balance_of(&self, owner: AccountId) -> u128 {
+        self.balances_by_owner.get(&owner).unwrap_or(0)
     }
 }
 
